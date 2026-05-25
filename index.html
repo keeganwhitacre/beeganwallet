@@ -2,7 +2,9 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>Couple Finance PWA</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
@@ -57,31 +59,14 @@
         // --- Initial Mock Data ---
         const defaultSettings = {
             deviceUser: 'Bel', 
-            belVenmo: 'bel-venmo',
-            keeganVenmo: 'keegan-venmo',
+            belVenmo: 'isabelgrace756',
+            keeganVenmo: 'keegwhit',
             geminiApiKey: '',
             githubPat: '',
             gistId: ''
         };
 
-        const mockTransactions = [
-            { 
-                id: '1', store: 'Aldi trip', date: '5/23/26', total: 136.54, status: 'BEL PAID', isCurrent: true,
-                items: [
-                    { id: 'i1', name: 'Atlantic Salmon, 4 fillets, truncate this text, uhhh salmon...', price: 10.99, assignedTo: 'Bel' },
-                    { id: 'i2', name: 'Chicken thighs probably', price: 8.99, assignedTo: 'Keegan' },
-                    { id: 'i3', name: 'Hint of Lime chips!', price: 1.80, assignedTo: 'SPLIT' },
-                    { id: 'i4', name: 'Ben & Jerry\'s', price: 4.50, assignedTo: 'Bel' },
-                    { id: 'i5', name: 'Broccoli', price: 0.99, assignedTo: 'CLAIM' },
-                    { id: 'i6', name: 'Broccoli', price: 0.99, assignedTo: 'CLAIM' },
-                    { id: 'i7', name: 'Broccoli', price: 0.99, assignedTo: 'Keegan' }
-                ]
-            },
-            { id: '2', store: 'Target trip', date: '5/23/26', total: 25.43, status: 'KEEGAN PAID', items: [] },
-            { id: '3', store: 'Wifi', date: '5/21/26', total: 56.00, status: 'BEL PAID', items: [] },
-            { id: '4', store: 'Security Deposit', date: '5/14/26', total: 143.50, status: 'KEEGAN PAID', items: [] },
-            { id: '5', store: 'Poopoo.', date: '5/10/26', total: 79.99, status: 'BEL PAID', items: [] }
-        ];
+        const mockTransactions = [];
 
         // --- Global State ---
         let state = {
@@ -390,14 +375,18 @@
                 </div>
             `).join('');
 
+            if (!txHTML) {
+                txHTML = `<div class="text-center text-black/50 font-bold py-6 italic opacity-70">No transactions yet.</div>`;
+            }
+
             // CSS classes to handle the "Show All" card expanding upwards smoothly
             const recentCardClasses = state.isRecentExpanded 
-                ? `fixed inset-0 z-50 m-0 rounded-none pt-12 pb-32 overflow-y-auto` 
+                ? `fixed inset-0 z-50 m-0 rounded-none pt-[calc(env(safe-area-inset-top)+3rem)] pb-32 overflow-y-auto` 
                 : `mx-6 mt-6 rounded-[2rem] relative`;
 
             return `
                 <div class="flex-1 overflow-y-auto no-scrollbar pb-32 w-full theme-transition bg-[#333333]">
-                    <div class="bg-gradient-to-br ${theme.gradient} rounded-b-[2.5rem] px-6 pt-12 pb-8 relative shadow-sm border-b border-black/10">
+                    <div class="bg-gradient-to-br ${theme.gradient} rounded-b-[2.5rem] px-6 pt-[calc(env(safe-area-inset-top)+3rem)] pb-8 relative shadow-sm border-b border-black/10">
                         <div class="flex justify-between items-center mb-6">
                             <h1 class="text-[2.5rem] leading-none font-extrabold tracking-tight">Hello, ${theme.name}!</h1>
                             <div class="flex gap-2">
@@ -457,6 +446,8 @@
 
         function renderDetails() {
             const tx = state.transactions.find(t => t.id === state.activeTxId) || state.transactions[0];
+            if (!tx) return `<div class="flex-1 flex justify-center items-center text-white">No data</div>`;
+
             const topGradient = 'from-[#D4D8F4] to-[#B7F900]';
             const bottomGradient = 'from-[#B7F900] to-[#D4D8F4]';
 
@@ -505,7 +496,7 @@
             return `
                 <div class="flex-1 flex flex-col w-full bg-[#333333] overflow-hidden">
                     <div class="bg-gradient-to-br ${topGradient} rounded-b-[2.5rem] relative z-10 shrink-0 shadow-sm">
-                        <div class="px-6 pt-8 pb-3 flex items-center gap-3">
+                        <div class="px-6 pt-[calc(env(safe-area-inset-top)+2rem)] pb-3 flex items-center gap-3">
                             <button data-action="go-home" class="p-1 -ml-1 active:scale-90 transition-transform">
                                 <i data-lucide="arrow-left" class="w-6 h-6"></i>
                             </button>
@@ -828,7 +819,7 @@
                         generationConfig: { responseMimeType: "application/json" }
                     };
 
-                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=${apiKey}`, {
                         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
                     });
 
