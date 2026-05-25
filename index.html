@@ -5,20 +5,31 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <title>Couple Finance PWA</title>
+    <title>Beegan Wallet</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        
+        /* App-like behavior fixes */
         body {
             background-color: #333333;
             margin: 0;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             overscroll-behavior: none;
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-touch-callout: none;
+            position: fixed;
+            inset: 0;
+        }
+
+        #app {
+            height: 100dvh;
+            width: 100vw;
         }
         
-        /* Smooth, bouncy transitions for all state changes */
         .theme-transition { transition: all 0.5s cubic-bezier(0.2, 0.8, 0.2, 1); }
         
         .slide-up { animation: slideUp 0.35s cubic-bezier(0.2, 0.8, 0.2, 1) forwards; }
@@ -46,10 +57,10 @@
         }
     </script>
 </head>
-<body class="flex justify-center items-center min-h-screen">
+<body class="flex justify-center items-center">
 
     <!-- App Container -->
-    <div id="app" class="w-full max-w-md h-[100dvh] sm:h-[850px] bg-[#333333] text-neutral-900 relative overflow-hidden sm:rounded-[3rem] shadow-2xl sm:border-[8px] sm:border-[#1C1C1E] flex flex-col">
+    <div id="app" class="w-full max-w-md bg-[#333333] text-neutral-900 relative overflow-hidden sm:rounded-[3rem] shadow-2xl sm:border-[8px] sm:border-[#1C1C1E] flex flex-col mx-auto">
         <!-- Dynamic content injected here -->
     </div>
 
@@ -67,13 +78,36 @@
         };
 
         const mockTransactions = [];
+        const mockLists = [
+            {
+                id: 'list1', title: 'Apartment Wishlist',
+                items: [
+                    { id: 'li1', name: 'Tapestry behind bed', checked: false, assignedTo: 'Bel' },
+                    { id: 'li2', name: 'Curtains for living room', checked: false, assignedTo: 'Bel' },
+                    { id: 'li3', name: 'Rechargeable batteries', checked: true, assignedTo: 'Keegan' },
+                    { id: 'li4', name: 'Nightstand lamp', checked: false, assignedTo: 'Keegan' }
+                ]
+            },
+            {
+                id: 'list2', title: 'Grocery List',
+                items: [
+                    { id: 'li5', name: 'SALMONNNNN', checked: false, assignedTo: 'Bel' },
+                    { id: 'li6', name: 'Milk', checked: false, assignedTo: 'Bel' },
+                    { id: 'li7', name: 'Yogurt!', checked: false, assignedTo: 'Keegan' },
+                    { id: 'li8', name: 'Chips', checked: false, assignedTo: 'Keegan' },
+                    { id: 'li9', name: 'Salsa', checked: false, assignedTo: 'Bel' }
+                ]
+            }
+        ];
 
         // --- Global State ---
         let state = {
             settings: { ...defaultSettings },
             transactions: [],
+            lists: [...mockLists],
             currentView: 'home',
             activeTxId: null,
+            activeListId: null,
             modal: null, 
             isProcessing: false,
             editingItemId: null
@@ -86,15 +120,18 @@
                 const parsed = JSON.parse(saved);
                 state.settings = parsed.settings || defaultSettings;
                 state.transactions = parsed.transactions || mockTransactions;
+                state.lists = parsed.lists || mockLists;
             } else {
                 state.transactions = [...mockTransactions];
+                state.lists = [...mockLists];
             }
         }
 
         function saveState() {
             localStorage.setItem('coupleFinanceState', JSON.stringify({
                 settings: state.settings,
-                transactions: state.transactions
+                transactions: state.transactions,
+                lists: state.lists
             }));
             syncToGist();
         }
@@ -119,7 +156,6 @@
                 if (isKeeganPayer) keeganPaid += tx.total;
 
                 if (!tx.items || tx.items.length === 0) {
-                    // Handle manual entry explicit splits
                     if (tx.splitType === 'Bel') belShare += tx.total;
                     else if (tx.splitType === 'Keegan') keeganShare += tx.total;
                     else { belShare += tx.total / 2; keeganShare += tx.total / 2; }
@@ -131,10 +167,14 @@
                         itemsSum += i.price;
                         if (i.assignedTo === 'Bel') belItems += i.price;
                         else if (i.assignedTo === 'Keegan') keeganItems += i.price;
-                        else sharedItems += i.price; // Handles 'CLAIM' and 'SPLIT'
+                        else if (i.assignedTo === 'SPLIT') {
+                            const custom = i.customSplit || { Bel: 50, Keegan: 50 };
+                            belItems += i.price * (custom.Bel / 100);
+                            keeganItems += i.price * (custom.Keegan / 100);
+                        }
+                        else sharedItems += i.price; // Handles 'CLAIM'
                     });
                     
-                    // Remainder (taxes, tips) automatically splits 50/50
                     const remainder = tx.total - itemsSum;
                     belShare += belItems + (sharedItems / 2) + (remainder / 2);
                     keeganShare += keeganItems + (sharedItems / 2) + (remainder / 2);
@@ -178,26 +218,26 @@
             render();
         }
 
-        function switchView(view, txId = null) {
+        function switchView(view, id = null) {
             state.currentView = view;
-            if (txId) state.activeTxId = txId;
-            state.isRecentExpanded = false; // Reset expansion
+            if (view === 'details' || view === 'edit-tx') state.activeTxId = id;
+            if (view === 'list-detail') state.activeListId = id;
             render();
         }
 
         function openModal(modalName) { state.modal = modalName; render(); }
         function closeModal() { state.modal = null; render(); }
 
+        // --- Transaction Actions ---
         function cycleItemAssignment(itemId) {
             const tx = state.transactions.find(t => t.id === state.activeTxId);
             if (!tx || !tx.items) return;
-            
             tx.items = tx.items.map(item => {
                 if (item.id === itemId) {
                     const next = item.assignedTo === 'CLAIM' ? 'Bel' : 
                                  item.assignedTo === 'Bel' ? 'Keegan' : 
-                                 item.assignedTo === 'Keegan' ? 'CLAIM' : 'Bel'; // Routes SPLIT back to Bel
-                    return { ...item, assignedTo: next };
+                                 item.assignedTo === 'Keegan' ? 'CLAIM' : 'Bel';
+                    return { ...item, assignedTo: next, customSplit: null };
                 }
                 return item;
             });
@@ -208,9 +248,8 @@
         function splitItem(itemId) {
             const tx = state.transactions.find(t => t.id === state.activeTxId);
             if (!tx || !tx.items) return;
-            
             tx.items = tx.items.map(item => {
-                if (item.id === itemId) return { ...item, assignedTo: 'SPLIT' };
+                if (item.id === itemId) return { ...item, assignedTo: 'SPLIT', customSplit: { Bel: 50, Keegan: 50 } };
                 return item;
             });
             saveState();
@@ -220,12 +259,28 @@
         function deleteItem(itemId) {
             const tx = state.transactions.find(t => t.id === state.activeTxId);
             if (!tx || !tx.items) return;
-            
             const itemIndex = tx.items.findIndex(i => i.id === itemId);
             if (itemIndex > -1) {
                 tx.total -= tx.items[itemIndex].price;
                 tx.items.splice(itemIndex, 1);
             }
+            saveState();
+            render();
+        }
+
+        // --- List Actions ---
+        function toggleListCheckbox(listId, itemId) {
+            const list = state.lists.find(l => l.id === listId);
+            const item = list.items.find(i => i.id === itemId);
+            item.checked = !item.checked;
+            saveState();
+            render();
+        }
+
+        function cycleListAssignment(listId, itemId) {
+            const list = state.lists.find(l => l.id === listId);
+            const item = list.items.find(i => i.id === itemId);
+            item.assignedTo = item.assignedTo === 'Bel' ? 'Keegan' : 'Bel';
             saveState();
             render();
         }
@@ -306,6 +361,17 @@
             closeModal();
         }
 
+        function handleSplitSave() {
+            const slider = document.getElementById('split-slider-input');
+            const belVal = parseInt(slider.value);
+            const tx = state.transactions.find(t => t.id === state.activeTxId);
+            const item = tx.items.find(i => i.id === state.editingItemId);
+            item.assignedTo = 'SPLIT';
+            item.customSplit = { Bel: belVal, Keegan: 100 - belVal };
+            saveState();
+            closeModal();
+        }
+
         // --- Render Functions ---
         function renderPill(status) {
             if (status === 'CLAIM') {
@@ -319,19 +385,21 @@
 
         function renderBottomNav() {
             const theme = getTheme();
-            const isHome = state.currentView === 'home';
+            const isHome = state.currentView === 'home' || state.currentView === 'details';
+            const isLists = state.currentView === 'lists' || state.currentView === 'list-detail';
             
             return `
                 <div class="absolute bottom-6 left-1/2 -translate-x-1/2 bg-darkerBg rounded-full px-3 py-2 flex items-center justify-between w-[280px] shadow-xl z-[60] border border-black/20 theme-transition">
                     <button class="p-3 text-white/50 hover:text-white transition-colors">
-                        <i data-lucide="pie-chart" class="w-6 h-6"></i>
+                        <i data-lucide="dollar-sign" class="w-6 h-6"></i>
                     </button>
-                    <button data-action="go-home" class="flex items-center gap-2 px-6 py-3 rounded-full transition-all duration-300 ${isHome ? `bg-gradient-to-br ${theme.gradient} text-black border border-black` : 'text-white/50 hover:text-white'}">
+                    <button data-action="go-home" class="flex items-center gap-2 px-5 py-3 rounded-full transition-all duration-300 ${isHome ? `bg-gradient-to-br ${theme.gradient} text-black border border-black` : 'text-white/50 hover:text-white'}">
                         <i data-lucide="home" class="w-5 h-5"></i>
                         ${isHome ? '<span class="font-bold text-sm">Home</span>' : ''}
                     </button>
-                    <button class="p-3 text-white/50 hover:text-white transition-colors">
-                        <i data-lucide="gift" class="w-6 h-6"></i>
+                    <button data-action="go-lists" class="flex items-center gap-2 px-5 py-3 rounded-full transition-all duration-300 ${isLists ? `bg-gradient-to-br ${theme.gradient} text-black border border-black` : 'text-white/50 hover:text-white'}">
+                        <i data-lucide="file-text" class="w-5 h-5"></i>
+                        ${isLists ? '<span class="font-bold text-sm">Lists</span>' : ''}
                     </button>
                 </div>
             `;
@@ -357,7 +425,6 @@
                     </button>`;
             }
             
-            // Filter out settlement payments from the lists
             const nonSettlements = state.transactions.filter(tx => tx.store !== 'Settlement Payment');
             const txList = nonSettlements.slice(0, 5);
             
@@ -382,7 +449,7 @@
             }
 
             return `
-                <div id="main-scroll" class="flex-1 overflow-y-auto no-scrollbar pb-32 w-full theme-transition bg-[#333333]">
+                <div id="main-scroll" class="flex-1 overflow-y-auto no-scrollbar pb-[140px] w-full theme-transition bg-[#333333]">
                     <div class="bg-gradient-to-br ${theme.gradient} rounded-b-[2.5rem] px-6 pt-[calc(env(safe-area-inset-top)+3rem)] pb-8 relative shadow-sm border-b border-black/10">
                         <div class="flex justify-between items-center mb-6">
                             <h1 class="text-[2.5rem] leading-none font-extrabold tracking-tight">Hello, ${theme.name}!</h1>
@@ -450,7 +517,10 @@
                 
                 let userName = item.assignedTo;
                 if (isClaim) userName = 'CLAIM';
-                if (isSplit) userName = '50 / 50';
+                if (isSplit) {
+                    const custom = item.customSplit || { Bel: 50, Keegan: 50 };
+                    userName = custom.Bel === 50 && custom.Keegan === 50 ? '50 / 50' : `${custom.Bel} / ${custom.Keegan}`;
+                }
 
                 const topBgColor = isSplit ? '#FFFFFF' : getUserColor(item.assignedTo);
                 const topTextColor = isClaim ? 'text-white' : 'text-black';
@@ -470,7 +540,7 @@
                                 style="background-color: ${topBgColor};">
                                 ${userName.substring(0,7)}
                             </button>
-                            <button data-action="split-item" data-id="${item.id}" class="w-full ${splitBtnBg} py-1.5 rounded-full text-[10px] font-bold tracking-widest uppercase border border-black transition-colors active:scale-95">
+                            <button data-action="split-item" data-longpress="split" data-id="${item.id}" class="w-full ${splitBtnBg} py-1.5 rounded-full text-[10px] font-bold tracking-widest uppercase border border-black transition-colors active:scale-95">
                                 SPLIT
                             </button>
                         </div>
@@ -518,7 +588,7 @@
                         </div>
                     </div>
 
-                    <div id="main-scroll" class="flex-1 overflow-y-auto no-scrollbar bg-gradient-to-br ${bottomGradient} rounded-t-[2.5rem] mt-2 px-6 pt-6 pb-32">
+                    <div id="main-scroll" class="flex-1 overflow-y-auto no-scrollbar bg-gradient-to-br ${bottomGradient} rounded-t-[2.5rem] mt-2 px-6 pt-6 pb-[140px]">
                         <h3 class="font-bold text-[16px] mb-2">Items</h3>
                         <div class="h-px bg-black w-full mb-4 opacity-50"></div>
                         <div class="flex flex-col gap-4 overflow-x-hidden">
@@ -526,8 +596,104 @@
                         </div>
                     </div>
                 </div>
+                ${renderBottomNav()}
             `;
         }
+
+        // --- Lists Rendering ---
+        function renderListsHome() {
+            const theme = getTheme();
+            const topGradient = 'from-[#D4D8F4] to-[#B7F900]';
+
+            let listCardsHTML = state.lists.map((list, idx) => {
+                const cardGradient = idx % 2 === 0 ? 'from-[#E6EAEF] to-[#D4D8F4]' : 'from-[#F0FDE0] to-[#B7F900]';
+                const marginClass = idx > 0 ? '-mt-6' : ''; // Stack them
+                
+                let listItems = list.items.slice(0, 4).map(item => {
+                    const bgColor = getUserColor(item.assignedTo);
+                    return `
+                        <div class="flex justify-between items-center py-2 border-b border-black/30">
+                            <div class="flex items-center gap-3 cursor-pointer flex-1" data-action="toggle-list-item" data-list-id="${list.id}" data-item-id="${item.id}">
+                                <i data-lucide="${item.checked ? 'check-square' : 'square'}" class="w-5 h-5 ${item.checked ? 'text-black' : 'text-black/50'}"></i>
+                                <span class="text-sm font-medium ${item.checked ? 'line-through opacity-50' : ''}">${item.name}</span>
+                            </div>
+                            <button data-action="cycle-list-item" data-list-id="${list.id}" data-item-id="${item.id}" class="px-4 py-1 rounded-full text-[9px] font-bold tracking-widest uppercase border border-black" style="background-color: ${bgColor};">
+                                ${item.assignedTo}
+                            </button>
+                        </div>
+                    `;
+                }).join('');
+
+                if (list.items.length > 4) {
+                    listItems += `<div class="text-xs font-bold opacity-50 text-center mt-2">+ ${list.items.length - 4} more</div>`;
+                }
+
+                return `
+                    <div class="bg-gradient-to-br ${cardGradient} rounded-t-[2.5rem] pt-6 pb-12 px-6 border border-black/10 shadow-[0_-10px_30px_rgba(0,0,0,0.15)] relative z-${10 + idx} ${marginClass} cursor-pointer transition-transform active:translate-y-2" data-action="view-list" data-id="${list.id}">
+                        <h2 class="text-2xl font-extrabold tracking-tight mb-4">${list.title}</h2>
+                        <div class="flex flex-col pointer-events-none">
+                            ${listItems}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            return `
+                <div class="flex-1 flex flex-col w-full bg-[#333333] overflow-hidden">
+                    <div class="bg-gradient-to-br ${topGradient} pt-[calc(env(safe-area-inset-top)+3rem)] pb-12 px-6 relative z-0">
+                        <h1 class="text-[3rem] leading-none font-extrabold tracking-tight">Lists</h1>
+                    </div>
+                    <div id="main-scroll" class="flex-1 overflow-y-auto no-scrollbar pb-[140px] -mt-6">
+                        ${listCardsHTML}
+                    </div>
+                </div>
+                ${renderBottomNav()}
+            `;
+        }
+
+        function renderListDetail() {
+            const list = state.lists.find(l => l.id === state.activeListId) || state.lists[0];
+            const listIndex = state.lists.findIndex(l => l.id === list.id);
+            const cardGradient = listIndex % 2 === 0 ? 'from-[#E6EAEF] to-[#D4D8F4]' : 'from-[#F0FDE0] to-[#B7F900]';
+
+            let listItems = list.items.map(item => {
+                const bgColor = getUserColor(item.assignedTo);
+                return `
+                    <div class="flex justify-between items-center py-4 border-b border-black">
+                        <div class="flex items-center gap-3 cursor-pointer flex-1" data-action="toggle-list-item" data-list-id="${list.id}" data-item-id="${item.id}">
+                            <i data-lucide="${item.checked ? 'check-square' : 'square'}" class="w-6 h-6 ${item.checked ? 'text-black' : 'text-black/50'}"></i>
+                            <span class="text-base font-semibold ${item.checked ? 'line-through opacity-50' : ''}">${item.name}</span>
+                        </div>
+                        <button data-action="cycle-list-item" data-list-id="${list.id}" data-item-id="${item.id}" class="px-5 py-1.5 rounded-full text-[10px] font-bold tracking-widest uppercase border border-black transition-colors" style="background-color: ${bgColor};">
+                            ${item.assignedTo}
+                        </button>
+                    </div>
+                `;
+            }).join('');
+
+            return `
+                <div class="flex-1 flex flex-col w-full bg-[#333333] overflow-hidden">
+                    <div class="bg-gradient-to-br ${cardGradient} flex-1 flex flex-col pt-[calc(env(safe-area-inset-top)+2rem)]">
+                        <div class="px-6 pb-2 flex items-center gap-3">
+                            <button data-action="go-lists" class="p-1 -ml-1 active:scale-90 transition-transform">
+                                <i data-lucide="arrow-left" class="w-6 h-6"></i>
+                            </button>
+                        </div>
+                        <div class="px-6 pb-4 border-b border-black">
+                            <h1 class="text-4xl font-extrabold tracking-tight">${list.title}</h1>
+                        </div>
+                        <div id="main-scroll" class="flex-1 overflow-y-auto no-scrollbar px-6 pb-[140px]">
+                            ${listItems}
+                            <button class="w-full py-4 mt-6 border-2 border-dashed border-black/30 rounded-xl font-bold uppercase tracking-widest text-xs flex justify-center items-center gap-2 active:scale-95 transition-transform hover:bg-black/5">
+                                <i data-lucide="plus" class="w-4 h-4"></i> Add Item
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                ${renderBottomNav()}
+            `;
+        }
+
 
         function renderModals() {
             if (!state.modal) return '';
@@ -561,7 +727,7 @@
                 return `
                     <div class="absolute inset-0 z-50 flex flex-col justify-end pointer-events-none">
                         <div class="absolute inset-0 bg-black/40 pointer-events-auto transition-opacity" data-action="close-modal"></div>
-                        <div class="bg-gradient-to-br ${theme.gradient} w-full h-[92%] rounded-t-[2.5rem] p-6 pb-32 pointer-events-auto slide-up shadow-[0_-10px_40px_rgba(0,0,0,0.3)] flex flex-col">
+                        <div class="bg-gradient-to-br ${theme.gradient} w-full h-[92%] rounded-t-[2.5rem] p-6 pb-[140px] pointer-events-auto slide-up shadow-[0_-10px_40px_rgba(0,0,0,0.3)] flex flex-col">
                             <div class="w-12 h-1.5 bg-black/20 rounded-full mx-auto mb-6 shrink-0"></div>
                             <h1 class="text-[3rem] leading-none font-extrabold tracking-tight mb-6 shrink-0">Recent</h1>
                             <div class="overflow-y-auto no-scrollbar flex-1 pb-12">
@@ -719,13 +885,35 @@
                         </div>
                     </form>
                 `;
+            } else if (state.modal === 'split-slider') {
+                const tx = state.transactions.find(t => t.id === state.activeTxId);
+                const item = tx.items.find(i => i.id === state.editingItemId);
+                const custom = item.customSplit || { Bel: 50, Keegan: 50 };
+
+                content = `
+                    <h2 class="text-3xl font-extrabold mb-2">Custom Split</h2>
+                    <p class="text-sm font-semibold mb-6 opacity-70">Adjust the slider to split the cost differently.</p>
+                    <div class="mb-8">
+                        <div class="flex justify-between font-bold mb-4 text-xl tracking-tighter">
+                            <span id="bel-split-val">Bel: ${custom.Bel}%</span>
+                            <span id="keegan-split-val">Keegan: ${custom.Keegan}%</span>
+                        </div>
+                        <input type="range" id="split-slider-input" min="0" max="100" value="${custom.Bel}" 
+                            oninput="document.getElementById('bel-split-val').innerText = 'Bel: ' + this.value + '%'; document.getElementById('keegan-split-val').innerText = 'Keegan: ' + (100 - this.value) + '%';"
+                            class="w-full h-3 bg-black/10 rounded-full appearance-none cursor-pointer accent-black">
+                    </div>
+                    <div class="pt-2 flex gap-3">
+                        <button type="button" data-action="close-modal" class="flex-1 py-4 border border-black rounded-xl font-bold uppercase tracking-widest text-xs">Cancel</button>
+                        <button type="button" onclick="handleSplitSave()" class="flex-1 py-4 bg-black text-white rounded-xl font-bold uppercase tracking-widest text-xs">Save Split</button>
+                    </div>
+                `;
             }
 
             return `
                 <div class="absolute inset-0 z-50 flex flex-col justify-end pointer-events-none">
                     <div class="absolute inset-0 bg-black/40 pointer-events-auto transition-opacity" data-action="close-modal"></div>
-                    <div class="bg-gradient-to-br from-[#E6EAEF] to-[#D4D8F4] w-full max-h-[90%] rounded-t-[2.5rem] p-6 pb-12 pointer-events-auto slide-up shadow-[0_-10px_40px_rgba(0,0,0,0.3)] flex flex-col">
-                        <div class="w-12 h-1.5 bg-black/20 rounded-full mx-auto mb-6"></div>
+                    <div class="bg-gradient-to-br from-[#E6EAEF] to-[#D4D8F4] w-full max-h-[90%] rounded-t-[2.5rem] p-6 pb-[140px] pointer-events-auto slide-up shadow-[0_-10px_40px_rgba(0,0,0,0.3)] flex flex-col">
+                        <div class="w-12 h-1.5 bg-black/20 rounded-full mx-auto mb-6 shrink-0"></div>
                         <div class="overflow-y-auto no-scrollbar flex-1">
                             ${content}
                         </div>
@@ -741,18 +929,19 @@
             
             // Save scroll positions before rendering to prevent jumping
             const mainScroll = document.getElementById('main-scroll');
-            const recentScroll = document.getElementById('recent-scroll');
             const mainScrollPos = mainScroll ? mainScroll.scrollTop : 0;
-            const recentScrollPos = recentScroll ? recentScroll.scrollTop : 0;
 
-            let content = state.currentView === 'home' ? renderHome() : renderDetails();
+            let content = '';
+            if (state.currentView === 'home') content = renderHome();
+            else if (state.currentView === 'details') content = renderDetails();
+            else if (state.currentView === 'lists') content = renderListsHome();
+            else if (state.currentView === 'list-detail') content = renderListDetail();
+
             app.innerHTML = content + renderModals();
             
             // Restore scroll positions if we didn't change views
             const newMainScroll = document.getElementById('main-scroll');
-            const newRecentScroll = document.getElementById('recent-scroll');
             if (newMainScroll && previousViewForScroll === state.currentView) newMainScroll.scrollTop = mainScrollPos;
-            if (newRecentScroll && previousViewForScroll === state.currentView) newRecentScroll.scrollTop = recentScrollPos;
             
             previousViewForScroll = state.currentView;
 
@@ -760,8 +949,9 @@
             attachGestures();
         }
 
-        // --- Gestures (Swipe) ---
+        // --- Gestures (Swipe & Long Press) ---
         function attachGestures() {
+            // Swipe
             const swipeables = document.querySelectorAll('[data-swipeable="true"]');
             swipeables.forEach(el => {
                 let startX = 0; let currentX = 0;
@@ -786,6 +976,20 @@
                     }
                 });
             });
+
+            // Long Press for custom split
+            const splitBtns = document.querySelectorAll('[data-longpress="split"]');
+            splitBtns.forEach(el => {
+                let timer;
+                el.addEventListener('touchstart', (e) => {
+                    timer = setTimeout(() => {
+                        state.editingItemId = el.getAttribute('data-id');
+                        openModal('split-slider');
+                    }, 500); // Trigger after 500ms
+                }, {passive: true});
+                el.addEventListener('touchend', () => clearTimeout(timer));
+                el.addEventListener('touchmove', () => clearTimeout(timer));
+            });
         }
 
         // --- Event Delegation ---
@@ -798,6 +1002,8 @@
             else if (action === 'open-all') openModal('all');
             else if (action === 'view-details') { closeModal(); switchView('details', btn.getAttribute('data-id')); }
             else if (action === 'go-home') { closeModal(); switchView('home'); }
+            else if (action === 'go-lists') { closeModal(); switchView('lists'); }
+            else if (action === 'view-list') { closeModal(); switchView('list-detail', btn.getAttribute('data-id')); }
             else if (action === 'open-settings') openModal('settings');
             else if (action === 'open-manual') openModal('manual');
             else if (action === 'open-settle') openModal('settle');
@@ -813,6 +1019,12 @@
             }
             else if (action === 'cycle-item') cycleItemAssignment(btn.getAttribute('data-id'));
             else if (action === 'split-item') splitItem(btn.getAttribute('data-id'));
+            else if (action === 'toggle-list-item') toggleListCheckbox(btn.getAttribute('data-list-id'), btn.getAttribute('data-item-id'));
+            else if (action === 'cycle-list-item') {
+                // Prevent the toggle from firing when hitting the button
+                e.stopPropagation();
+                cycleListAssignment(btn.getAttribute('data-list-id'), btn.getAttribute('data-item-id'));
+            }
             else if (action === 'mark-settled') {
                 const amount = parseFloat(btn.getAttribute('data-amount'));
                 const payer = state.settings.deviceUser;
