@@ -35,6 +35,16 @@
             user-select: none;
         }
 
+        #app {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+
+
         /* Re-enables text selection only where explicitly needed (forms, editable text) */
         [contenteditable="true"], input, select {
             -webkit-user-select: auto;
@@ -42,6 +52,8 @@
         }
 
         #main-scroll {
+    flex: 1;
+    overflow-y: auto;
     -webkit-overflow-scrolling: touch;
 }
         
