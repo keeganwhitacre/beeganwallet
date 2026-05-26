@@ -363,6 +363,9 @@
             const sheet = document.getElementById('active-modal-sheet');
             const backdrop = document.getElementById('modal-backdrop');
             if (sheet && backdrop) {
+                sheet.style.animation = 'none';
+                sheet.classList.remove('slide-up');
+                void sheet.offsetWidth; // Force a layout calculation so the transition isn't skipped
                 sheet.style.transition = 'transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1)';
                 sheet.style.transform = 'translateY(100%)';
                 backdrop.style.transition = 'opacity 0.25s ease';
@@ -1284,6 +1287,8 @@
                         isDragging = true;
                         startTime = Date.now();
                         modalSheet.style.transition = 'none';
+                        modalSheet.style.animation = 'none'; // Unlocks the CSS 'forwards' transform
+                        modalSheet.classList.remove('slide-up');
                         if (backdrop) backdrop.style.transition = 'none';
                     }
                 };
