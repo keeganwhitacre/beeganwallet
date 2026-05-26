@@ -1,0 +1,16 @@
+{
+  "name": "BeeganWallet",
+  "short_name": "Beegan",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#333333",
+  "theme_color": "#333333",
+  "description": "Shared Beegan finances and lists.",
+  "icons": [
+    {
+      "src": "images/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    }
+  ]
+}
