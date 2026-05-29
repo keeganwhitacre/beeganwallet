@@ -1757,6 +1757,93 @@
             }
         });
 
+        // Gemini Receipt Processing
+        document.getElementById('receipt-upload').addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            if (!state.settings.geminiApiKey) {
+                e.target.value = '';
+                showAlert('Missing API Key', 'Please add your Gemini API key in Settings first!');
+                return;
+            }
+
+            state.isProcessing = true;
+            render(); // Trigger the loading spinner
+
+            try {
+                const base64Data = await new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.readAsDataURL(file);
+                    reader.onload = () => resolve(reader.result.split(',')[1]);
+                    reader.onerror = error => reject(error);
+                });
+
+                const apiKey = state.settings.geminiApiKey;
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=${apiKey}`;
+
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{
+                            parts: [
+                                { text: "Analyze this receipt. Return a JSON object with: 'store' (string), 'date' (string, MM/DD/YY format), 'total' (number), and 'items' (array of objects with 'name' string and 'price' number). Exclude tax/tip from items if possible, or include them as separate items. Only return the raw JSON object, no markdown blocks." },
+                                { inlineData: { mimeType: file.type, data: base64Data } }
+                            ]
+                        }],
+                        generationConfig: {
+                            responseMimeType: "application/json"
+                        }
+                    })
+                });
+
+                if (!response.ok) throw new Error('API request failed');
+
+                const result = await response.json();
+                const textResponse = result.candidates[0].content.parts[0].text;
+                let parsedData;
+                
+                try {
+                    parsedData = JSON.parse(textResponse);
+                } catch(err) {
+                    // Fallback to strip accidentally included markdown formatting
+                    const clean = textResponse.replace(/```json/g, '').replace(/```/g, '').trim();
+                    parsedData = JSON.parse(clean);
+                }
+
+                const newTx = {
+                    id: 'tx-' + Date.now().toString(),
+                    store: parsedData.store || 'Scanned Receipt',
+                    date: parsedData.date || new Date().toLocaleDateString('en-US', {month: 'numeric', day: 'numeric', year: '2-digit'}),
+                    total: parsedData.total || 0,
+                    status: state.settings.deviceUser === 'Bel' ? 'BEL PAID' : 'KEEGAN PAID',
+                    splitType: 'SPLIT',
+                    items: (parsedData.items || []).map((item, i) => ({
+                        id: 'item-' + Date.now().toString() + '-' + i,
+                        name: item.name || 'Item',
+                        price: item.price || 0,
+                        assignedTo: 'CLAIM'
+                    }))
+                };
+
+                state.transactions.unshift(newTx);
+                saveState();
+                
+                // Jump straight to the newly scanned details page!
+                state.activeTxId = newTx.id;
+                state.currentView = 'details';
+
+            } catch (error) {
+                console.error('Gemini processing error:', error);
+                showAlert('Processing Failed', 'Failed to parse receipt. Make sure your API key is valid and try again.');
+            } finally {
+                state.isProcessing = false;
+                e.target.value = ''; 
+                render(); // Clear spinner
+            }
+        });
+
         // Register Service Worker
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
