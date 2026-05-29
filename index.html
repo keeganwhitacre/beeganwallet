@@ -246,7 +246,7 @@
             state.recurring.forEach(bill => {
                 if (currentDay >= bill.recurrenceDay && bill.lastPostedMonth !== currentMonthStr) {
                     const newTx = {
-                        id: 'tx-' + Date.now().toString() + Math.floor(Math.random()*1000),
+                        id: generateId('tx'),
                         store: bill.name,
                         date: now.toLocaleDateString('en-US', {month: 'numeric', day: 'numeric', year: '2-digit'}),
                         total: bill.amount,
@@ -339,6 +339,16 @@
             return '$' + Math.abs(parseFloat(amount)).toFixed(2);
         }
 
+        function generateId(prefix) {
+            return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        }
+
+        // Dates are stored as M/D/YY — new Date('5/29/26') parses as 1926 in JS, so we handle it explicitly
+        function parseDate(str) {
+            const [m, d, y] = str.split('/').map(Number);
+            return new Date(2000 + y, m - 1, d);
+        }
+
         // --- Action Handlers ---
         function toggleActiveUser() {
             state.settings.deviceUser = state.settings.deviceUser === 'Bel' ? 'Keegan' : 'Bel';
@@ -357,6 +367,12 @@
             state.modal = modalName; 
             render(); 
             state.modalJustOpened = false;
+        }
+
+        function showAlert(title, message) {
+            state.alertTitle = title;
+            state.alertMessage = message;
+            openModal('alert');
         }
 
         function closeModalAnimated() {
@@ -496,7 +512,7 @@
             let storeTotals = {};
 
             state.transactions.forEach(tx => {
-                const txDate = new Date(tx.date); 
+                const txDate = parseDate(tx.date);
                 if (txDate.getMonth() === currentMonth && txDate.getFullYear() === currentYear && tx.store !== 'Settlement Payment') {
                     thisMonthTotal += tx.total;
                     if (tx.status === 'BEL PAID') belPaid += tx.total;
@@ -660,7 +676,7 @@
                 <!-- Scrollable Content Container -->
                 <div id="main-scroll" class="flex-1 overflow-y-auto no-scrollbar w-full bg-[#333333] relative z-10 -mt-[2.5rem] pt-[calc(2.5rem+1.5rem)] pb-32">
                     <div class="flex gap-3 px-6 relative z-10">
-                        <button onclick="document.getElementById('receipt-upload').click()" class="flex-1 bg-darkerBg text-white rounded-[1.25rem] py-4 flex justify-center items-center gap-2 font-saans font-semibold text-sm active:scale-95 transition-transform border border-black/50">
+                        <button onclick="if(!state.isProcessing) document.getElementById('receipt-upload').click()" class="flex-1 bg-darkerBg text-white rounded-[1.25rem] py-4 flex justify-center items-center gap-2 font-saans font-semibold text-sm active:scale-95 transition-transform border border-black/50">
                             ${state.isProcessing ? `<i data-lucide="loader-2" class="w-5 h-5 animate-spin"></i> Parsing...` : `<i data-lucide="scan" class="w-5 h-5"></i> Upload Receipt`}
                         </button>
                         <button data-action="open-manual" class="flex-1 bg-darkerBg text-white rounded-[1.25rem] py-4 flex justify-center items-center gap-2 font-saans font-semibold text-sm active:scale-95 transition-transform border border-black/50">
@@ -777,7 +793,7 @@
 
                 <!-- Scrollable Content Container -->
                 <div id="main-scroll" class="flex-1 overflow-y-auto no-scrollbar w-full bg-[#333333] relative z-10 -mt-[2.5rem] pt-[calc(2.5rem+1.5rem)] pb-32 px-0 sm:px-6">
-                    <div class="bg-gradient-to-br from-cardEnd to-bel rounded-t-[2.5rem] sm:rounded-[2.5rem] mx-0 px-6 pt-6 pb-8 flex-1 relative border border-black/10 min-h-full shadow-sm">
+                <div class="bg-gradient-to-br from-cardEnd to-bel rounded-[2.5rem] mx-4 px-6 pt-6 pb-8 relative border border-black/10 shadow-sm">
                         <h3 class="font-saans font-semibold text-[16px] mb-2">Items</h3>
                         <div class="h-px bg-black w-full mb-4 opacity-50"></div>
                         <div class="flex flex-col gap-4 overflow-x-hidden">
@@ -1165,6 +1181,16 @@
                         </div>
                     </form>
                 `;
+            } else if (state.modal === 'alert') {
+                content = `
+                    <h2 class="text-3xl font-saans font-semibold mb-6 text-red-500">${state.alertTitle || 'Notice'}</h2>
+                    <p class="mb-6 font-saans font-normal text-lg">${state.alertMessage}</p>
+                    <div class="flex flex-col gap-3">
+                        <button data-action="close-modal" class="w-full py-4 bg-black text-white rounded-xl font-mono uppercase tracking-widest text-xs active:scale-95 transition-transform">
+                            Okay
+                        </button>
+                    </div>
+                `;
             }
 
             // Unified Modal Wrapper Pattern
@@ -1454,8 +1480,7 @@
                 const payer = state.settings.deviceUser;
                 const beneficiary = payer === 'Bel' ? 'Keegan' : 'Bel';
                 const newTx = {
-                    id: 'tx-' + Date.now().toString(),
-                    store: 'Settlement Payment',
+                    id: generateId('tx'),
                     date: new Date().toLocaleDateString('en-US', {month: 'numeric', day: 'numeric', year: '2-digit'}),
                     total: amount,
                     status: payer === 'Bel' ? 'BEL PAID' : 'KEEGAN PAID',
@@ -1496,7 +1521,7 @@
             // Standard List / Item Logic
             else if (action === 'close-modal') closeModalAnimated();
             else if (action === 'create-list') {
-                const newList = { id: 'list-' + Date.now(), name: 'New List', items: [] };
+                const newList = { id: generateId('list'), name: 'New List', items: [] };
                 state.lists.unshift(newList);
                 state.activeListId = newList.id;
                 saveState();
@@ -1531,7 +1556,7 @@
             else if (action === 'add-list-item') {
                 const list = state.lists.find(l => l.id === btn.getAttribute('data-list-id'));
                 if (list) {
-                    list.items.push({ id: 'item-' + Date.now(), text: 'New Item', checked: false, assignedTo: 'CLAIM' });
+                    list.items.push({ id: generateId('item'), text: 'New Item', checked: false, assignedTo: 'CLAIM' });
                     saveState(); render();
                 }
             }
@@ -1566,8 +1591,7 @@
             e.preventDefault();
             const fd = new FormData(e.target);
             const newTx = {
-                id: 'tx-' + Date.now().toString(),
-                store: fd.get('store'),
+                id: generateId('tx'),
                 date: new Date().toLocaleDateString('en-US', {month: 'numeric', day: 'numeric', year: '2-digit'}),
                 total: parseFloat(fd.get('total')),
                 status: fd.get('payer') === 'Bel' ? 'BEL PAID' : 'KEEGAN PAID',
@@ -1583,7 +1607,7 @@
             e.preventDefault();
             const fd = new FormData(e.target);
             const newBill = {
-                id: 'rec-' + Date.now().toString(),
+                id: generateId('rec'),
                 name: fd.get('name'),
                 amount: parseFloat(fd.get('amount')),
                 payer: fd.get('payer'),
@@ -1628,11 +1652,13 @@
             } else {
                 tx.items = tx.items || [];
                 tx.items.push({
-                    id: 'item-' + Date.now().toString(),
+                    id: generateId('item'),
                     name: fd.get('name'),
                     price: parseFloat(fd.get('price')),
                     assignedTo: 'CLAIM'
                 });
+                const itemsSum = tx.items.reduce((sum, i) => sum + i.price, 0);
+                if (itemsSum > tx.total) tx.total = Math.round(itemsSum * 100) / 100;
             }
             saveState();
             closeModalAnimated();
@@ -1641,6 +1667,95 @@
         // Initialize App
         loadState();
         render();
+        // Pull remote state on startup so both devices are in sync without a manual refresh
+        loadFromGist().then(() => render()).catch(() => {});
+
+        // Gemini Receipt Processing
+        document.getElementById('receipt-upload').addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            if (!state.settings.geminiApiKey) {
+                e.target.value = '';
+                showAlert('Missing API Key', 'Please add your Gemini API key in Settings first!');
+                return;
+            }
+
+            state.isProcessing = true;
+            render(); // Trigger the loading spinner
+
+            try {
+                const base64Data = await new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.readAsDataURL(file);
+                    reader.onload = () => resolve(reader.result.split(',')[1]);
+                    reader.onerror = error => reject(error);
+                });
+
+                const apiKey = state.settings.geminiApiKey;
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=${apiKey}`;
+
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{
+                            parts: [
+                                { text: "Analyze this receipt. Return a JSON object with: 'store' (string), 'date' (string, MM/DD/YY format), 'total' (number), and 'items' (array of objects with 'name' string and 'price' number). Exclude tax/tip from items if possible, or include them as separate items. Only return the raw JSON object, no markdown blocks." },
+                                { inlineData: { mimeType: file.type, data: base64Data } }
+                            ]
+                        }],
+                        generationConfig: {
+                            responseMimeType: "application/json"
+                        }
+                    })
+                });
+
+                if (!response.ok) throw new Error('API request failed');
+
+                const result = await response.json();
+                const textResponse = result.candidates[0].content.parts[0].text;
+                let parsedData;
+                
+                try {
+                    parsedData = JSON.parse(textResponse);
+                } catch(err) {
+                    // Fallback to strip accidentally included markdown formatting
+                    const clean = textResponse.replace(/```json/g, '').replace(/```/g, '').trim();
+                    parsedData = JSON.parse(clean);
+                }
+
+                const newTx = {
+                    id: generateId('tx'),
+                    store: parsedData.store || 'Scanned Receipt',
+                    date: parsedData.date || new Date().toLocaleDateString('en-US', {month: 'numeric', day: 'numeric', year: '2-digit'}),
+                    total: parsedData.total || 0,
+                    status: state.settings.deviceUser === 'Bel' ? 'BEL PAID' : 'KEEGAN PAID',
+                    splitType: 'SPLIT',
+                    items: (parsedData.items || []).map((item, i) => ({
+                        id: generateId('item'),
+                        name: item.name || 'Item',
+                        price: item.price || 0,
+                        assignedTo: 'CLAIM'
+                    }))
+                };
+
+                state.transactions.unshift(newTx);
+                saveState();
+                
+                // Jump straight to the newly scanned details page!
+                state.activeTxId = newTx.id;
+                state.currentView = 'details';
+
+            } catch (error) {
+                console.error('Gemini processing error:', error);
+                showAlert('Processing Failed', 'Failed to parse receipt. Make sure your API key is valid and try again.');
+            } finally {
+                state.isProcessing = false;
+                e.target.value = ''; 
+                render(); // Clear spinner
+            }
+        });
 
         // Register Service Worker
         if ('serviceWorker' in navigator) {
