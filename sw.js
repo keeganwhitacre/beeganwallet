@@ -1,4 +1,4 @@
-const CACHE_NAME = 'beeganwallet-v6';
+const CACHE_NAME = 'beeganwallet-v7';
 
 // Core assets to cache immediately
 const ASSETS_TO_CACHE = [
