@@ -130,6 +130,7 @@
             transactions: [],
             lists: [],
             recurring: [],
+            deleted: [],
             lastModified: 0,
             currentView: 'home',
             activeTxId: null,
@@ -151,6 +152,7 @@
                 state.transactions = parsed.transactions || mockTransactions;
                 state.lists = parsed.lists || mockLists;
                 state.recurring = parsed.recurring || [];
+                state.deleted = parsed.deleted || [];
                 state.lastModified = parsed.lastModified || 0;
             } else {
                 state.transactions = [...mockTransactions];
@@ -167,6 +169,7 @@
                 transactions: state.transactions,
                 lists: state.lists,
                 recurring: state.recurring,
+                deleted: state.deleted,
                 lastModified: state.lastModified
             }));
             saveToGist();
@@ -184,6 +187,7 @@
                             transactions: state.transactions,
                             lists: state.lists,
                             recurring: state.recurring,
+                            deleted: state.deleted,
                             lastModified: state.lastModified
                         })
                     }
@@ -225,18 +229,17 @@
                 
                 if (file) {
                     const parsed = JSON.parse(file.content);
-                    const remoteModified = parsed.lastModified || 0;
 
-                    // Only overwrite local state if the Gist is genuinely newer.
-                    // Without this, a startup pull can race a just-fired saveToGist
-                    // and clobber local changes that haven't reached the Gist yet.
-                    if (remoteModified <= state.lastModified) return;
+                    // Union tombstone lists first — deletions from either phone propagate
+                    state.deleted = [...new Set([...(state.deleted || []), ...(parsed.deleted || [])])];
 
-                    if (parsed.transactions) state.transactions = parsed.transactions;
-                    if (parsed.lists) state.lists = parsed.lists;
-                    if (parsed.recurring) state.recurring = parsed.recurring;
-                    state.lastModified = remoteModified;
-                    
+                    // Merge rather than replace — new items from either phone survive,
+                    // and edits to existing items let the remote version win.
+                    if (parsed.transactions) state.transactions = mergeById(state.transactions, parsed.transactions, state.deleted);
+                    if (parsed.lists) state.lists = mergeLists(state.lists, parsed.lists, state.deleted);
+                    if (parsed.recurring) state.recurring = mergeById(state.recurring, parsed.recurring, state.deleted);
+                    state.lastModified = parsed.lastModified || state.lastModified;
+
                     localStorage.setItem('coupleFinanceState', JSON.stringify({
                         settings: state.settings,
                         transactions: state.transactions,
@@ -363,6 +366,41 @@
             return new Date(2000 + y, m - 1, d);
         }
 
+        // Union two arrays by id — remote wins on conflict (handles edits).
+        // Items that only exist locally are preserved, so new adds from either
+        // phone survive even if the Gist hasn't caught up yet.
+        function mergeById(local, remote, deleted = []) {
+            const tombstones = new Set(deleted);
+            const map = new Map(
+                local.filter(i => !tombstones.has(i.id)).map(item => [item.id, item])
+            );
+            for (const item of remote) {
+                if (!tombstones.has(item.id)) map.set(item.id, item);
+            }
+            return Array.from(map.values());
+        }
+
+        function mergeLists(local, remote, deleted = []) {
+            const tombstones = new Set(deleted);
+            const map = new Map(
+                local.filter(l => !tombstones.has(l.id)).map(list => [list.id, list])
+            );
+            for (const remoteList of remote) {
+                if (tombstones.has(remoteList.id)) continue;
+                const localList = map.get(remoteList.id);
+                map.set(remoteList.id, localList
+                    ? { ...remoteList, items: mergeById(localList.items || [], remoteList.items || [], deleted) }
+                    : { ...remoteList, items: (remoteList.items || []).filter(i => !tombstones.has(i.id)) }
+                );
+            }
+            return Array.from(map.values());
+        }
+
+        // Record a deleted ID so merges on both phones skip it permanently
+        function tombstone(id) {
+            if (id && !state.deleted.includes(id)) state.deleted.push(id);
+        }
+
         // --- Action Handlers ---
         function toggleActiveUser() {
             state.settings.deviceUser = state.settings.deviceUser === 'Bel' ? 'Keegan' : 'Bel';
@@ -467,6 +505,7 @@
             
             const itemIndex = tx.items.findIndex(i => i.id === itemId);
             if (itemIndex > -1) {
+                tombstone(itemId);
                 tx.total -= tx.items[itemIndex].price;
                 tx.items.splice(itemIndex, 1);
             }
@@ -1273,6 +1312,7 @@
                                 const itemId = el.getAttribute('data-item-id');
                                 const list = state.lists.find(l => l.id === listId);
                                 if (list) {
+                                    tombstone(itemId);
                                     list.items = list.items.filter(i => i.id !== itemId);
                                     saveState();
                                     render();
@@ -1510,6 +1550,7 @@
             else if (action === 'open-edit-tx') openModal('edit-tx');
             else if (action === 'delete-tx') openModal('confirm-delete-tx');
             else if (action === 'execute-delete-tx') {
+                tombstone(state.activeTxId);
                 state.transactions = state.transactions.filter(t => t.id !== state.activeTxId);
                 saveState(); closeModalAnimated(); switchView('home');
             }
@@ -1518,6 +1559,11 @@
             else if (action === 'open-list') { state.activeListId = btn.getAttribute('data-list-id'); openModal('list-detail'); }
             else if (action === 'delete-list') openModal('confirm-delete-list');
             else if (action === 'execute-delete-list') {
+                const listToDelete = state.lists.find(l => l.id === state.activeListId);
+                if (listToDelete) {
+                    tombstone(state.activeListId);
+                    (listToDelete.items || []).forEach(item => tombstone(item.id));
+                }
                 state.lists = state.lists.filter(l => l.id !== state.activeListId);
                 saveState(); closeModalAnimated(); switchView('lists');
             }
@@ -1526,7 +1572,9 @@
             else if (action === 'open-recurring-form') openModal('recurring-form');
             else if (action === 'delete-recurring') {
                 if (confirm('Delete this recurring bill?')) {
-                    state.recurring = state.recurring.filter(b => b.id !== btn.getAttribute('data-id'));
+                    const recId = btn.getAttribute('data-id');
+                    tombstone(recId);
+                    state.recurring = state.recurring.filter(b => b.id !== recId);
                     saveState();
                     render();
                 }
@@ -1606,6 +1654,7 @@
             const fd = new FormData(e.target);
             const newTx = {
                 id: generateId('tx'),
+                store: fd.get('store'),
                 date: new Date().toLocaleDateString('en-US', {month: 'numeric', day: 'numeric', year: '2-digit'}),
                 total: parseFloat(fd.get('total')),
                 status: fd.get('payer') === 'Bel' ? 'BEL PAID' : 'KEEGAN PAID',
