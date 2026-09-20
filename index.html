@@ -361,7 +361,7 @@
             if (!tx.items || tx.items.length === 0) {
                 if (tx.splitType === 'Bel') return { bel: total, keegan: 0 };
                 if (tx.splitType === 'Keegan') return { bel: 0, keegan: total };
-                return { bel: total / 2, keegan: total / 2 };
+                return finalizeShares(total / 2, total);
             }
             let bel = 0, keegan = 0, itemsSum = 0;
             tx.items.forEach(item => {
@@ -376,7 +376,16 @@
                 } else { bel += price / 2; keegan += price / 2; }
             });
             const remainder = total - itemsSum;
-            return { bel: bel + remainder / 2, keegan: keegan + remainder / 2 };
+            return finalizeShares(bel + remainder / 2, total);
+        }
+
+        // Allocate in whole cents. Bel's calculated share is rounded once, then
+        // Keegan receives the exact remainder so the displayed shares always add
+        // back to the purchase total (including odd-cent 50/50 splits).
+        function finalizeShares(rawBelShare, total) {
+            const totalCents = Math.round((Number(total) || 0) * 100);
+            const belCents = Math.round((Number(rawBelShare) || 0) * 100);
+            return { bel: belCents / 100, keegan: (totalCents - belCents) / 100 };
         }
 
         // --- Helper Functions ---
