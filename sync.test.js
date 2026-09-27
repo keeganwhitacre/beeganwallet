@@ -7,8 +7,10 @@ const script = html.slice(html.indexOf('// --- Global State ---'), html.indexOf(
 
 function phone(shared, transactions, lists) {
     const storage = new Map();
+    const exports = [];
     const context = vm.createContext({
-        Date, Math, JSON, console: { error() {} },
+        Date, Math, JSON, Blob, File, console: { error() {} },
+        navigator: { canShare: () => true, share: async ({ files }) => { exports.push(JSON.parse(await files[0].text())); } },
         localStorage: { setItem(key, value) { storage.set(key, value); } },
         fetch: async (_url, options = {}) => {
             if (options.method === 'PATCH') {
@@ -26,8 +28,8 @@ function phone(shared, transactions, lists) {
     });
     vm.runInContext('const defaultSettings = {}; const mockTransactions = []; const mockLists = [];', context);
     vm.runInContext(script, context);
-    vm.runInContext(`state.settings = { githubPat: 'test', gistId: 'test' }; state.transactions = ${JSON.stringify(transactions)}; state.lists = ${JSON.stringify(lists)}; state.currentView = 'lists';`, context);
-    return { context, storage, run: code => vm.runInContext(code, context) };
+    vm.runInContext(`state.settings = { githubPat: 'test', gistId: 'test', deviceUser: 'Bel' }; state.transactions = ${JSON.stringify(transactions)}; state.lists = ${JSON.stringify(lists)}; state.currentView = 'lists'; state.recoveryMode = false;`, context);
+    return { context, storage, exports, run: code => vm.runInContext(code, context) };
 }
 
 async function main() {
@@ -70,6 +72,12 @@ async function main() {
     assert.equal(await c.run('saveToGist()'), false);
     assert.equal(c.run('state.syncStatus.includes("403")'), true);
     assert.equal(c.run('state.transactions.some(tx => tx.id === "unpublished")'), true);
+
+    c.run('state.recoveryMode = true');
+    assert.equal(await c.run('saveToGist()'), false);
+    await c.run('exportLocalBackup()');
+    assert.equal(c.exports[0].transactions.some(tx => tx.id === 'unpublished'), true);
+    assert.equal('settings' in c.exports[0], false, 'backup must not contain API credentials');
     console.log('Sync recovery checks passed');
 }
 

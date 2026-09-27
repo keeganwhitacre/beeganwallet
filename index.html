@@ -146,7 +146,8 @@
             addingListItemFor: null,
             syncPromise: null,
             syncRevision: 0,
-            syncStatus: ''
+            syncStatus: '',
+            recoveryMode: true
         };
 
         // --- Persistence / Sync ---
@@ -202,6 +203,7 @@
         }
 
         async function saveToGist() {
+            if (state.recoveryMode) return false;
             try { requireSyncSettings(); } catch (error) { syncError(error); return false; }
             if (state.syncPromise) return state.syncPromise;
             state.syncPromise = (async () => {
@@ -247,6 +249,27 @@
                 deleted: state.deleted,
                 lastModified: state.lastModified
             };
+        }
+
+        async function exportLocalBackup() {
+            const backup = {
+                format: 'beeganwallet-local-backup-v1',
+                exportedAt: new Date().toISOString(),
+                deviceUser: state.settings.deviceUser,
+                ...syncSnapshot()
+            };
+            const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+            const filename = `beeganwallet-${state.settings.deviceUser.toLowerCase()}-${Date.now()}.json`;
+            const file = new File([blob], filename, { type: 'application/json' });
+            if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                try { await navigator.share({ files: [file], title: 'BeeganWallet backup' }); return; }
+                catch (error) { if (error.name === 'AbortError') return; }
+            }
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url; link.download = filename;
+            document.body.appendChild(link); link.click(); link.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 60000);
         }
 
         async function loadFromGist() {
@@ -815,6 +838,10 @@
                             </button>
                         </div>
                     </div>
+                    <div class="mb-3 rounded-xl border border-black bg-white/80 px-3 py-3 text-xs font-saans">
+                        Shared sync is paused while we recover both phones.
+                        <button data-action="export-backup" class="ml-1 font-semibold underline">Save this phone’s backup</button>
+                    </div>
                     <div class="border border-black rounded-2xl p-5 relative overflow-hidden bg-white/40 backdrop-blur-md">
                         <div class="flex justify-between items-end relative z-10">
                             <div>
@@ -1203,6 +1230,7 @@
                             <label class="block text-xs font-mono uppercase tracking-widest mb-1">Gist ID</label>
                             <input type="text" name="gist" value="${state.settings.gistId || ''}" class="w-full bg-black/5 border border-black rounded-xl px-4 py-3 font-saans font-normal focus:outline-none focus:bg-white">
                         </div>
+                        <button type="button" data-action="export-backup" class="w-full py-3 border border-black rounded-xl font-mono uppercase tracking-widest text-xs">Save This Phone’s Backup</button>
                         <div class="pt-4 flex gap-3">
                             <button type="button" data-action="close-modal" class="flex-1 py-4 border border-black rounded-xl font-mono uppercase tracking-widest text-xs">Cancel</button>
                             <button type="submit" class="flex-1 py-4 bg-black text-white rounded-xl font-mono uppercase tracking-widest text-xs">Save</button>
@@ -1629,7 +1657,9 @@
             
             const action = btn.getAttribute('data-action');
             if (action === 'toggle-user') toggleActiveUser(); 
+            else if (action === 'export-backup') exportLocalBackup();
             else if (action === 'refresh-data') {
+                if (state.recoveryMode) { showAlert('Sync Paused', 'Please save a backup from both phones before reconciling the shared data.'); return; }
                 state.isSyncing = true;
                 render();
                 await saveToGist();
@@ -1889,8 +1919,7 @@
         // Initialize App
         loadState();
         render();
-        // Merge and publish any locally saved changes left over from a failed sync.
-        saveToGist().then(() => render());
+        // Recovery mode preserves each phone's local copy until both are backed up.
 
         // Gemini Receipt Processing
         document.getElementById('receipt-upload').addEventListener('change', async (e) => {
