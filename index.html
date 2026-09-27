@@ -147,7 +147,7 @@
             syncPromise: null,
             syncRevision: 0,
             syncStatus: '',
-            recoveryMode: true
+            recoveryMode: false
         };
 
         // --- Persistence / Sync ---
@@ -837,10 +837,6 @@
                                 <i data-lucide="refresh-cw" class="w-3.5 h-3.5 text-black ${state.isSyncing ? 'animate-spin' : ''}"></i>
                             </button>
                         </div>
-                    </div>
-                    <div class="mb-3 rounded-xl border border-black bg-white/80 px-3 py-3 text-xs font-saans">
-                        Shared sync is paused while we recover both phones.
-                        <button data-action="export-backup" class="ml-1 font-semibold underline">Save this phone’s backup</button>
                     </div>
                     <div class="border border-black rounded-2xl p-5 relative overflow-hidden bg-white/40 backdrop-blur-md">
                         <div class="flex justify-between items-end relative z-10">
@@ -1919,7 +1915,8 @@
         // Initialize App
         loadState();
         render();
-        // Recovery mode preserves each phone's local copy until both are backed up.
+        // On startup, merge remote data and publish locally saved changes.
+        saveToGist().then(() => render());
 
         // Gemini Receipt Processing
         document.getElementById('receipt-upload').addEventListener('change', async (e) => {
