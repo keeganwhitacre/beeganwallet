@@ -145,7 +145,8 @@
             budgetYear: new Date().getFullYear(),
             addingListItemFor: null,
             syncPromise: null,
-            gistEtag: null
+            syncRevision: 0,
+            syncStatus: ''
         };
 
         // --- Persistence / Sync ---
@@ -169,50 +170,68 @@
 
         function saveState() {
             state.lastModified = Date.now();
-            localStorage.setItem('coupleFinanceState', JSON.stringify({
-                settings: state.settings,
-                transactions: state.transactions,
-                lists: state.lists,
-                recurring: state.recurring,
-                deleted: state.deleted,
-                lastModified: state.lastModified
-            }));
+            persistState();
+            state.syncRevision++;
             saveToGist();
         }
 
-        async function saveToGist() {
-            const { githubPat, gistId } = state.settings;
-            if (!githubPat || !gistId) return;
+        function persistState() {
+            localStorage.setItem('coupleFinanceState', JSON.stringify({
+                settings: state.settings, ...syncSnapshot()
+            }));
+        }
 
-            // Serialize saves on this device and always merge the latest remote
-            // snapshot before writing. This prevents the two phones from blindly
-            // replacing one another's changes.
+        function syncError(error) {
+            state.syncStatus = error.message || 'Sync failed. Your changes are saved on this phone.';
+            console.error('Gist sync failed:', error);
+            updateSyncBanner();
+        }
+
+        function updateSyncBanner() {
+            if (typeof document === 'undefined') return;
+            const banner = document.getElementById('sync-status');
+            if (!banner) return;
+            banner.textContent = state.syncStatus;
+            banner.classList.toggle('hidden', !state.syncStatus);
+        }
+
+        function requireSyncSettings() {
+            if (!state.settings.githubPat || !state.settings.gistId) {
+                throw new Error('Sync is not configured. Check the GitHub token and Gist ID in Settings. Your data is still on this phone.');
+            }
+        }
+
+        async function saveToGist() {
+            try { requireSyncSettings(); } catch (error) { syncError(error); return false; }
             if (state.syncPromise) return state.syncPromise;
             state.syncPromise = (async () => {
               try {
-                for (let attempt = 0; attempt < 2; attempt++) {
-                    await loadFromGist(false);
+                // A change made while a request is in flight gets its own pass.
+                let revision;
+                do {
+                    revision = state.syncRevision;
+                    await loadFromGist(); // A failed download must stop the upload.
                     const payload = {
                         description: "Couple Finance PWA Sync",
                         files: { "couple_finance_data.json": { content: JSON.stringify(syncSnapshot()) } }
                     };
-                    const headers = {
-                        'Authorization': `token ${githubPat}`,
-                        'Accept': 'application/vnd.github.v3+json',
-                        'Content-Type': 'application/json'
-                    };
-                    if (state.gistEtag) headers['If-Match'] = state.gistEtag;
-                    const response = await fetch(`https://api.github.com/gists/${gistId}`, {
-                        method: 'PATCH', headers, body: JSON.stringify(payload)
+                    const response = await fetch(`https://api.github.com/gists/${state.settings.gistId}`, {
+                        method: 'PATCH',
+                        headers: {
+                            'Authorization': `token ${state.settings.githubPat}`,
+                            'Accept': 'application/vnd.github.v3+json',
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(payload)
                     });
-                    if (response.status === 412 && attempt === 0) continue;
-                    if (!response.ok) throw new Error(`Gist save failed (${response.status})`);
-                    state.gistEtag = response.headers.get('etag') || state.gistEtag;
-                    console.log("Successfully synced to GitHub Gist");
-                    break;
-                }
+                    if (!response.ok) throw new Error(`Gist upload failed (${response.status}). Your data is still on this phone.`);
+                } while (state.syncRevision !== revision);
+                state.syncStatus = '';
+                updateSyncBanner();
+                return true;
               } catch (e) {
-                console.error("Failed to sync to Gist:", e);
+                syncError(e);
+                return false;
               } finally {
                 state.syncPromise = null;
               }
@@ -230,45 +249,32 @@
             };
         }
 
-        async function loadFromGist(persist = true) {
-            const { githubPat, gistId } = state.settings;
-            if (!githubPat || !gistId) return;
-            
-            try {
-                const res = await fetch(`https://api.github.com/gists/${gistId}?t=${Date.now()}`, {
-                    headers: {
-                        'Authorization': `token ${githubPat}`,
-                        'Accept': 'application/vnd.github.v3+json',
-                    }
-                });
-                
-                if (!res.ok) throw new Error("Gist fetch failed");
-                state.gistEtag = res.headers.get('etag');
-                
-                const data = await res.json();
-                const file = data.files['couple_finance_data.json'];
-                
-                if (file) {
-                    const parsed = JSON.parse(file.content);
-
-                    // Union tombstone lists first — deletions from either phone propagate
-                    state.deleted = [...new Set([...(state.deleted || []), ...(parsed.deleted || [])])];
-
-                    // Merge rather than replace — new items from either phone survive,
-                    // and edits to existing items let the remote version win.
-                    if (parsed.transactions) state.transactions = mergeById(state.transactions, parsed.transactions.map(normalizeTransaction), state.deleted);
-                    if (parsed.lists) state.lists = mergeLists(state.lists, parsed.lists.map(normalizeList), state.deleted);
-                    if (parsed.recurring) state.recurring = mergeById(state.recurring, parsed.recurring.map(item => ({ ...item, updatedAt: item.updatedAt || 0 })), state.deleted);
-                    state.lastModified = parsed.lastModified || state.lastModified;
-
-                    if (persist) localStorage.setItem('coupleFinanceState', JSON.stringify({
-                        settings: state.settings, ...syncSnapshot()
-                    }));
-                    checkAutoRecurring();
+        async function loadFromGist() {
+            requireSyncSettings();
+            const res = await fetch(`https://api.github.com/gists/${state.settings.gistId}?t=${Date.now()}`, {
+                headers: {
+                    'Authorization': `token ${state.settings.githubPat}`,
+                    'Accept': 'application/vnd.github.v3+json'
                 }
-            } catch (e) {
-                console.error("Failed to load from Gist:", e);
+            });
+            if (!res.ok) throw new Error(`Gist download failed (${res.status}). Your data is still on this phone.`);
+            const data = await res.json();
+            const file = data.files && data.files['couple_finance_data.json'];
+            if (!file || !file.content) throw new Error('The shared Gist data file is missing or too large to load. Your data is still on this phone.');
+            const parsed = JSON.parse(file.content);
+            if (!Array.isArray(parsed.transactions) || !Array.isArray(parsed.lists)) {
+                throw new Error('The shared Gist data is invalid. Your data is still on this phone.');
             }
+            state.deleted = [...new Set([...(state.deleted || []), ...(parsed.deleted || [])])];
+            state.transactions = mergeById(state.transactions, parsed.transactions.map(normalizeTransaction), state.deleted);
+            state.lists = mergeLists(state.lists, parsed.lists.map(normalizeList), state.deleted);
+            if (parsed.recurring) state.recurring = mergeById(state.recurring, parsed.recurring.map(item => ({ ...item, updatedAt: item.updatedAt || 0 })), state.deleted);
+            state.lastModified = Math.max(parsed.lastModified || 0, state.lastModified || 0);
+            persistState();
+            checkAutoRecurring();
+            state.syncStatus = '';
+            updateSyncBanner();
+            return true;
         }
 
         function checkAutoRecurring() {
@@ -405,6 +411,10 @@
 
         function formatMoney(amount) {
             return '$' + Math.abs(parseFloat(amount)).toFixed(2);
+        }
+
+        function escapeHTML(value) {
+            return String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
         }
 
         function generateId(prefix) {
@@ -1383,7 +1393,7 @@
             else if (state.currentView === 'budget') content = renderBudget();
             else content = renderDetails();
             
-            app.innerHTML = content + renderModals();
+            app.innerHTML = content + renderModals() + `<div id="sync-status" role="alert" class="${state.syncStatus ? '' : 'hidden'} absolute top-[calc(env(safe-area-inset-top)+0.5rem)] left-4 right-4 z-[90] rounded-xl border border-red-700 bg-white px-3 py-2 text-xs font-saans text-red-900 shadow-lg">${escapeHTML(state.syncStatus)}</div>`;
             
             const newMainScroll = document.getElementById('main-scroll');
             if (newMainScroll && previousViewForScroll === state.currentView) newMainScroll.scrollTop = mainScrollPos;
@@ -1622,7 +1632,7 @@
             else if (action === 'refresh-data') {
                 state.isSyncing = true;
                 render();
-                await loadFromGist();
+                await saveToGist();
                 state.isSyncing = false;
                 render();
             }
@@ -1650,7 +1660,6 @@
                 const beneficiary = payer === 'Bel' ? 'Keegan' : 'Bel';
                 const newTx = {
                     id: generateId('tx'),
-                    createdAt: Date.now(), updatedAt: Date.now(),
                     type: 'settlement',
                     store: 'Settlement Payment',
                     date: new Date().toLocaleDateString('en-US', {month: 'numeric', day: 'numeric', year: '2-digit'}),
@@ -1880,8 +1889,8 @@
         // Initialize App
         loadState();
         render();
-        // Pull remote state on startup so both devices are in sync without a manual refresh
-        loadFromGist().then(() => render()).catch(() => {});
+        // Merge and publish any locally saved changes left over from a failed sync.
+        saveToGist().then(() => render());
 
         // Gemini Receipt Processing
         document.getElementById('receipt-upload').addEventListener('change', async (e) => {
